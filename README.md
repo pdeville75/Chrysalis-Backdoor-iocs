@@ -45,7 +45,7 @@ This repository contains KQL (Kusto Query Language) detection rules and IOCs bas
 
 ---
 
-## 🔍 Detection Coverage
+## Detection Coverage
 
 ### By Data Source
 
