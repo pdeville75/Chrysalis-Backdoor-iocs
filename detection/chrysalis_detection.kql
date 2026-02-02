@@ -1,0 +1,285 @@
+// ============================================================================
+// CHRYSALIS BACKDOOR - LOTUS BLOSSOM APT DETECTION RULES
+// Basé sur: Rapid7 Threat Research - février 2025
+// ============================================================================
+
+// ============================================================================
+// 1. DÉTECTION PAR HASH DE FICHIERS (SHA-256)
+// ============================================================================
+
+// Détection des fichiers malveillants connus via DeviceFileEvents (MDE)
+let MaliciousHashes = dynamic([
+    // Fichiers principaux du backdoor Chrysalis
+    "a511be5164dc1122fb5a7daa3eef9467e43d8458425b15a640235796006590c9", // update.exe (NSIS installer)
+    "8ea8b83645fba6e23d48075a0d3fc73ad2ba515b4536710cda4f1f232718f53e", // NSIS.nsi
+    "2da00de67720f5f13b17e9d985fe70f10f153da60c9ab1086fe58f069a156924", // BluetoothService.exe
+    "77bfea78def679aa1117f569a35e8fd1542df21f7e00e27f192c907e61d63a2e", // BluetoothService (shellcode)
+    "3bdc4c0637591533f1d4198a72a33426c01f69bd2e15ceee547866f65e26b7ad", // log.dll (sideloading)
+    "9276594e73cda1c69b7d265b3f08dc8fa84bf2d6599086b9acc0bb3745146600", // u.bat (cleanup)
+    // Fichiers TCC et Cobalt Strike
+    "f4d829739f2d6ba7e3ede83dad428a0ced1a703ec582fc73a4eee3df3704629a", // conf.c
+    "4a52570eeaf9d27722377865df312e295a7a23c3b6eb991944c2ecd707cc9906", // libtcc.dll
+    "831e1ea13a1bd405f5bda2b9d8f2265f7b1db6c668dd2165ccc8a9c4c15ea7dd", // admin (CS beacon)
+    // Loaders Metasploit
+    "0a9b8df968df41920b6ff07785cbfebe8bda29e6b512c94a3b2a83d10014d2fd", // loader1
+    "4c2ea8193f4a5db63b897a2d3ce127cc5d89687f380b97a1d91e0c8db542e4f8", // uffhxpSy
+    "e7cd605568c38bd6e0aba31045e1633205d0598c607a855e2e1bca4cca1c6eda", // loader2
+    "078a9e5c6c787e5532a7e728720cbafee9021bfec4a30e3c2be110748d7c43c5", // 3yzr31vk
+    // Warbird Loader
+    "b4169a831292e245ebdffedd5820584d73b129411546e7d3eccf4663d5fc5be3", // ConsoleApplication2.exe
+    "7add554a98d3a99b319f2127688356c1283ed073a084805f14e33b4f6a6126fd", // system (CS beacon)
+    "fcc2765305bcd213b7558025b2039df2265c3e0b6401e4833123c461df2de51a"  // s047t5g.exe
+]);
+DeviceFileEvents
+| where SHA256 in~ (MaliciousHashes)
+| extend ThreatName = "Chrysalis Backdoor - Lotus Blossom APT"
+| project TimeGenerated, DeviceName, FileName, FolderPath, SHA256, ActionType, InitiatingProcessFileName, ThreatName;
+
+
+// ============================================================================
+// 2. DÉTECTION DES INDICATEURS RÉSEAU (C2)
+// ============================================================================
+
+// Détection des communications C2 via DeviceNetworkEvents
+let MaliciousIPs = dynamic([
+    "95.179.213.0",    // Serveur de téléchargement initial
+    "61.4.102.97",     // C2 api.skycloudcenter.com (Malaysia)
+    "59.110.7.32",     // C2 Cobalt Strike
+    "124.222.137.114"  // C2 Cobalt Strike
+]);
+let MaliciousDomains = dynamic([
+    "api.skycloudcenter.com",
+    "api.wiresguard.com"
+]);
+DeviceNetworkEvents
+| where RemoteIP in (MaliciousIPs) or RemoteUrl has_any (MaliciousDomains)
+| extend ThreatName = "Chrysalis C2 Communication - Lotus Blossom"
+| project TimeGenerated, DeviceName, RemoteIP, RemoteUrl, RemotePort, InitiatingProcessFileName, ThreatName;
+
+
+// Détection via CommonSecurityLog (Firewalls/Proxies)
+let MaliciousIPs = dynamic(["95.179.213.0", "61.4.102.97", "59.110.7.32", "124.222.137.114"]);
+let MaliciousDomains = dynamic(["api.skycloudcenter.com", "api.wiresguard.com"]);
+CommonSecurityLog
+| where DestinationIP in (MaliciousIPs) 
+    or RequestURL has_any (MaliciousDomains)
+    or DestinationHostName has_any (MaliciousDomains)
+| extend ThreatName = "Chrysalis C2 - Lotus Blossom APT"
+| project TimeGenerated, SourceIP, DestinationIP, DestinationHostName, RequestURL, DeviceAction, ThreatName;
+
+
+// Détection via DNS Events
+let MaliciousDomains = dynamic(["skycloudcenter.com", "wiresguard.com"]);
+DnsEvents
+| where Name has_any (MaliciousDomains)
+| extend ThreatName = "Chrysalis DNS Lookup - Lotus Blossom"
+| project TimeGenerated, Computer, Name, IPAddresses, QueryType, ThreatName;
+
+
+// ============================================================================
+// 3. DÉTECTION DES CHEMINS ET FICHIERS SUSPECTS
+// ============================================================================
+
+// Détection de la création du dossier Bluetooth caché dans AppData
+DeviceFileEvents
+| where FolderPath matches regex @"(?i)\\AppData\\Roaming\\Bluetooth\\"
+    or FolderPath has_all ("AppData", "Bluetooth", "BluetoothService")
+| extend ThreatName = "Chrysalis Installation Path Detected"
+| project TimeGenerated, DeviceName, FileName, FolderPath, ActionType, InitiatingProcessFileName, ThreatName;
+
+
+// Détection des fichiers dans USOShared (Tiny-C-Compiler abuse)
+DeviceFileEvents
+| where FolderPath matches regex @"(?i)C:\\ProgramData\\USOShared\\"
+    and (FileName in~ ("svchost.exe", "libtcc.dll", "conf.c") or FileName endswith ".c")
+| extend ThreatName = "Chrysalis TCC Loader Detected"
+| project TimeGenerated, DeviceName, FileName, FolderPath, ActionType, InitiatingProcessFileName, ThreatName;
+
+
+// Détection du fichier de cleanup u.bat
+DeviceFileEvents
+| where FileName =~ "u.bat" 
+    and (ActionType == "FileCreated" or ActionType == "FileModified")
+| extend ThreatName = "Potential Chrysalis Cleanup Script"
+| project TimeGenerated, DeviceName, FileName, FolderPath, ActionType, InitiatingProcessFileName, ThreatName;
+
+
+// ============================================================================
+// 4. DÉTECTION DES PROCESSUS ET LIGNES DE COMMANDE SUSPECTS
+// ============================================================================
+
+// Détection du DLL sideloading via Bitdefender Submission Wizard
+DeviceProcessEvents
+| where FileName =~ "BluetoothService.exe"
+    or (ProcessCommandLine has "BluetoothService" and ProcessCommandLine has_any ("-i", "-k"))
+| extend ThreatName = "Chrysalis Loader Execution"
+| project TimeGenerated, DeviceName, FileName, ProcessCommandLine, ThreatName;
+
+
+// Détection de l'exécution via Tiny-C-Compiler (conf.c)
+DeviceProcessEvents
+| where ProcessCommandLine has_all ("-nostdlib", "-run", ".c")
+    or (FileName =~ "svchost.exe" and FolderPath has "USOShared")
+    or ProcessCommandLine matches regex @"(?i)tcc\.exe.*-run.*\.c"
+| extend ThreatName = "Chrysalis TCC Shellcode Execution"
+| project TimeGenerated, DeviceName, FileName, ProcessCommandLine, FolderPath, ThreatName;
+
+
+// Détection de cmd.exe spawn suspect (reverse shell)
+DeviceProcessEvents
+| where FileName =~ "cmd.exe"
+    and ParentProcessName in~ ("BluetoothService.exe", "update.exe", "svchost.exe")
+| extend ThreatName = "Potential Chrysalis Reverse Shell"
+| project TimeGenerated, DeviceName, FileName, ProcessCommandLine, ThreatName;
+
+
+
+
+// ============================================================================
+// 5. DÉTECTION DU MUTEX CHRYSALIS
+// ============================================================================
+
+// Via DeviceEvents (si disponible)
+DeviceEvents
+| where ActionType == "CreateMutex" or AdditionalFields has "Mutex"
+| where AdditionalFields has "Global\\Jdhfv_1.0.1"
+| extend ThreatName = "Chrysalis Mutex Detected"
+| project TimeGenerated, DeviceName, ActionType, AdditionalFields, InitiatingProcessFileName, ThreatName;
+
+
+// ============================================================================
+// 6. DÉTECTION DE LA PERSISTANCE
+// ============================================================================
+
+// Détection des modifications de registre (Run keys)
+DeviceRegistryEvents
+| where RegistryKey has_any (
+    "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
+    "SYSTEM\\CurrentControlSet\\Services"
+)
+| where RegistryValueData has_any ("BluetoothService", "Bluetooth", "update.exe")
+| extend ThreatName = "Chrysalis Persistence Mechanism"
+| project TimeGenerated, DeviceName, RegistryKey, RegistryValueName, RegistryValueData, ActionType, ThreatName;
+
+
+// Détection de création de service suspect
+DeviceEvents
+| where ActionType == "ServiceInstalled"
+| where AdditionalFields has_any ("BluetoothService", "Bluetooth")
+| extend ThreatName = "Chrysalis Service Persistence"
+| project TimeGenerated, DeviceName, ActionType, AdditionalFields, InitiatingProcessFileName, ThreatName;
+
+
+// ============================================================================
+// 7. DÉTECTION DES USER-AGENTS SUSPECTS (Cobalt Strike)
+// ============================================================================
+
+// Via proxy logs
+CommonSecurityLog
+| where RequestClientApplication has_any (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.4044.92 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4472.114 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+)
+| where RequestURL has_any (
+    "/a/chat/s/",
+    "/users/admin",
+    "/users/system",
+    "/update/v1",
+    "/api/FileUpload/submit",
+    "/api/getBasicInfo/v1",
+    "/api/updateStatus/v1",
+    "/api/getInfo/v1",
+    "/api/Metadata/submit",
+    "/api/Info/submit"
+)
+| extend ThreatName = "Potential Chrysalis/Cobalt Strike Beacon Communication"
+| project TimeGenerated, SourceIP, DestinationIP, RequestURL, RequestClientApplication, ThreatName;
+
+
+
+// ============================================================================
+// 8. DÉTECTION DU DLL SIDELOADING (log.dll)
+// ============================================================================
+
+// Détection de log.dll chargé par un processus suspect
+DeviceImageLoadEvents
+| where FileName =~ "log.dll"
+| where InitiatingProcessFileName in~ ("BluetoothService.exe") 
+    or InitiatingProcessFolderPath has "Bluetooth"
+| extend ThreatName = "Chrysalis DLL Sideloading Detected"
+| project TimeGenerated, DeviceName, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessFolderPath, ThreatName;
+
+
+// Détection générique de DLL sideloading avec Bitdefender binaries
+DeviceImageLoadEvents
+| where InitiatingProcessFileName matches regex @"(?i)(Bitdefender|BluetoothService)"
+| where FileName =~ "log.dll" and not(FolderPath has "Bitdefender")
+| extend ThreatName = "Suspicious DLL Sideloading - Potential Chrysalis"
+| project TimeGenerated, DeviceName, FileName, FolderPath, InitiatingProcessFileName, SHA256, ThreatName;
+
+
+// ============================================================================
+// 9. DÉTECTION WARBIRD LOADER (NtQuerySystemInformation abuse)
+// ============================================================================
+
+// Détection de ConsoleApplication2.exe ou usage suspect de clipc.dll
+DeviceProcessEvents
+| where FileName =~ "ConsoleApplication2.exe"
+    or (ProcessCommandLine has "clipc.dll" and InitiatingProcessFileName != "svchost.exe")
+| extend ThreatName = "Warbird Loader - Chrysalis Related"
+| project TimeGenerated, DeviceName, FileName, ProcessCommandLine,  ThreatName;
+
+
+// Chargement suspect de clipc.dll
+DeviceImageLoadEvents
+| where FileName =~ "clipc.dll"
+| where InitiatingProcessFileName !in~ ("svchost.exe", "msiexec.exe", "TiWorker.exe")
+| extend ThreatName = "Suspicious clipc.dll Loading - Potential Warbird Abuse"
+| project TimeGenerated, DeviceName, FileName, FolderPath, InitiatingProcessFileName, ThreatName;
+
+
+
+
+
+// ============================================================================
+// 10. SENTINEL WATCHLIST - IMPORT DES IOCs POUR SURVEILLANCE CONTINUE
+// ============================================================================
+
+// Cette requête crée une liste d'IOCs à utiliser avec ThreatIntelligenceIndicator
+
+// Génération de la liste des IOCs pour export
+print IOCs = dynamic({
+    "FileHashes": [
+        "a511be5164dc1122fb5a7daa3eef9467e43d8458425b15a640235796006590c9",
+        "8ea8b83645fba6e23d48075a0d3fc73ad2ba515b4536710cda4f1f232718f53e",
+        "2da00de67720f5f13b17e9d985fe70f10f153da60c9ab1086fe58f069a156924",
+        "77bfea78def679aa1117f569a35e8fd1542df21f7e00e27f192c907e61d63a2e",
+        "3bdc4c0637591533f1d4198a72a33426c01f69bd2e15ceee547866f65e26b7ad",
+        "9276594e73cda1c69b7d265b3f08dc8fa84bf2d6599086b9acc0bb3745146600",
+        "f4d829739f2d6ba7e3ede83dad428a0ced1a703ec582fc73a4eee3df3704629a",
+        "4a52570eeaf9d27722377865df312e295a7a23c3b6eb991944c2ecd707cc9906",
+        "831e1ea13a1bd405f5bda2b9d8f2265f7b1db6c668dd2165ccc8a9c4c15ea7dd",
+        "0a9b8df968df41920b6ff07785cbfebe8bda29e6b512c94a3b2a83d10014d2fd",
+        "4c2ea8193f4a5db63b897a2d3ce127cc5d89687f380b97a1d91e0c8db542e4f8",
+        "e7cd605568c38bd6e0aba31045e1633205d0598c607a855e2e1bca4cca1c6eda",
+        "078a9e5c6c787e5532a7e728720cbafee9021bfec4a30e3c2be110748d7c43c5",
+        "b4169a831292e245ebdffedd5820584d73b129411546e7d3eccf4663d5fc5be3",
+        "7add554a98d3a99b319f2127688356c1283ed073a084805f14e33b4f6a6126fd",
+        "fcc2765305bcd213b7558025b2039df2265c3e0b6401e4833123c461df2de51a"
+    ],
+    "IPs": [
+        "95.179.213.0",
+        "61.4.102.97", 
+        "59.110.7.32",
+        "124.222.137.114"
+    ],
+    "Domains": [
+        "api.skycloudcenter.com",
+        "api.wiresguard.com"
+    ],
+    "ThreatActor": "Lotus Blossom (APT)",
+    "MalwareFamily": "Chrysalis Backdoor",
+    "Source": "Rapid7 Labs - February 2025"
+});
+
