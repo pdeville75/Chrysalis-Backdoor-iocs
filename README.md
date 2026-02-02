@@ -62,7 +62,7 @@ This repository contains KQL (Kusto Query Language) detection rules and IOCs bas
 
 ---
 
-## 🛡️ Indicators of Compromise
+## Indicators of Compromise
 
 ### Network Indicators
 
@@ -137,13 +137,6 @@ Contributions are welcome! Please submit a Pull Request with:
 - Additional IOCs from related campaigns
 - Translations to other SIEM query languages (Splunk SPL, Elastic EQL, etc.)
 
----
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
 
 ## Contact
 
